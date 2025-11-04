@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Stock Inventory — Realtime</title>
+
+  <!-- Firebase compat -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-storage-compat.js"></script>
+
+  <!-- XLSX -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+
+  <style>
+    body { font-family: Arial, Helvetica, sans-serif; margin:0; padding:18px; background: linear-gradient(120deg,#fff3e0,#ffb74d); }
+    header { background:#ff6f00; color:#fff; padding:14px; text-align:center; font-size:22px; font-weight:700; border-radius:8px; box-shadow:0 2px 6px rgba(0,0,0,.12); margin-bottom:16px; }
+    .container { max-width:1100px; margin:0 auto; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+    input, button, select, textarea { padding:8px; border-radius:6px; border:1px solid #ff8f00; font-size:14px; }
+    button { background:#ff6f00; color:#fff; border:none; cursor:pointer; }
+    button.small { padding:6px 10px; font-size:13px; }
+    table { width:100%; border-collapse:collapse; margin-top:10px; background:#fff; border-radius:8px; overflow:hidden; box-shadow:0 2px 6px rgba(0,0,0,.08); }
+    th, td { padding:10px; border-bottom:1px solid #ffecd1; text-align:center; }
+    th { background:#ffd180; }
+    td { background: rgba(255,255,255,0.95); }
+    #app-logo { width:180px; height:auto; border-radius:8px; object-fit:contain; cursor:pointer; display:block; margin:0 auto 12px; background:#fff; padding:6px; box-shadow:0 1px 4px rgba(0,0,0,.08); }
+    .num-input { width:80px; }
+    .status { margin-top:8px; color:green; font-weight:600; }
+    .hidden { display:none; }
+    .hint { color:#333; font-size:13px; margin-top:8px; }
+  </style>
+</head>
+<body>
+  <header>Stock Inventory — Realtime</header>
+  <div class="container">
+
+    <!-- Logo -->
+    <div id="logo-wrap" style="text-align:center;">
+      <img id="app-logo" src="" alt="App Logo (admin can change)" title="Admin: click to change logo. Users: view only.">
+      <input id="logo-file" type="file" accept="image/*" class="hidden">
+    </div>
+
+    <!-- Auth -->
+    <div id="auth-section">
+      <h3>Sign up / Sign in</h3>
+      <div class="row">
+        <input id="email" type="email" placeholder="Email">
+        <input id="password" type="password" placeholder="Password">
+        <input id="admin-code" type="text" placeholder="Admin code (optional)">
+      </div>
+      <div class="row">
+        <button id="signup" class="small">Sign up</button>
+        <button id="login" class="small">Sign in</button>
+      </div>
+      <div id="auth-status" class="status"></div>
+    </div>
+
+    <!-- App -->
+    <div id="app-section" class="hidden">
+      <div class="row" style="justify-content:space-between; align-items:center;">
+        <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+          <button id="logout" class="small">Sign out</button>
+          <input id="search" placeholder="Search item...">
+          <button id="sort-asc" class="small">A-Z</button>
+          <button id="sort-desc" class="small">Z-A</button>
+          <button id="add-item-btn" class="small">Add New Item</button>
+        </div>
+      </div>
+
+      <table aria-label="Inventory Table">
+        <thead>
+          <tr>
+            <th>No</th>
+            <th>Item Name</th>
+            <th>Initial Stock</th>
+            <th>Stock In (+)</th>
+            <th>Stock Out (-)</th>
+            <th>Final Stock</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody id="items-table"></tbody>
+      </table>
+
+      <div id="admin-controls" class="row hidden" style="margin-top:12px;">
+        <button id="import-btn" class="small">Import (Excel/CSV)</button>
+        <button id="export-btn" class="small">Export Excel</button>
+        <button id="delete-all-btn" class="small">Delete All Items</button>
+      </div>
+
+      <div class="row" style="margin-top:14px;">
+        <button id="delete-account" class="small">Delete My Account</button>
+        <div id="app-status" class="status"></div>
+      </div>
+
+      <div class="hint">
+        Import recognizes common headers: name / item_name / Nama / Nama Barang and stock / stok / initial_stock. If deletion of account asks for recent login, sign in again then retry.
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ------------------- CONFIG: your firebaseConfig (from you) ------------------- */
+const firebaseConfig = {
+  apiKey: "AIzaSyARuZ3pieoSBSp0vcMP8aTnIdWkvbu3XTE",
+  authDomain: "stockcounttt.firebaseapp.com",
+  databaseURL: "https://stockcounttt-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "stockcounttt",
+  storageBucket: "stockcounttt.appspot.com",
+  messagingSenderId: "1009121063519",
+  appId: "1:1009121063519:web:bef425fc4de426bb8e61ea",
+  measurementId: "G-KBBWQWTWVN"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+const db = firebase.database();
+const storage = firebase.storage();
+
+/* ------------------- DOM refs ------------------- */
+const authSection = document.getElementById('auth-section');
+const appSection = document.getElementById('app-section');
+const emailInput = document.getElementById('email');
+const passwordInput = document.getElementById('password');
+const adminCodeInput = document.getElementById('admin-code');
+const signupBtn = document.getElementById('signup');
+const loginBtn = document.getElementById('login');
+const logoutBtn = document.getElementById('logout');
+const authStatus = document.getElementById('auth-status');
+
+const appLogo = document.getElementById('app-logo');
+const logoFile = document.getElementById('logo-file');
+
+const searchInput = document.getElementById('search');
+const sortAscBtn = document.getElementById('sort-asc');
+const sortDescBtn = document.getElementById('sort-desc');
+const addItemBtn = document.getElementById('add-item-btn');
+
+const itemsTable = document.getElementById('items-table');
+const adminControls = document.getElementById('admin-controls');
+const importBtn = document.getElementById('import-btn');
+const exportBtn = document.getElementById('export-btn');
+const deleteAllBtn = document.getElementById('delete-all-btn');
+const deleteAccountBtn = document.getElementById('delete-account');
+const appStatus = document.getElementById('app-status');
+
+let currentUser = null;
+let currentUserRole = 'user';
+let itemsData = []; // array of { key, name, initialStock, stockIn, stockOut, finalStock }
+
+/* ------------------- AUTH state persistence ------------------- */
+auth.onAuthStateChanged(async user => {
+  if (user) {
+    currentUser = user;
+    try {
+      const snap = await db.ref('users/' + user.uid + '/role').once('value');
+      currentUserRole = snap.val() || 'user';
+    } catch (e) {
+      currentUserRole = 'user';
+    }
+    showApp();
+  } else {
+    // show auth
+    authSection.style.display = 'block';
+    appSection.classList.add('hidden');
+  }
+});
+
+/* ------------------- Sign up / Sign in / Sign out ------------------- */
+signupBtn.addEventListener('click', async () => {
+  const email = emailInput.value.trim();
+  const pass = passwordInput.value;
+  if(!email || !pass){ authStatus.style.color='red'; authStatus.textContent='Email & password required'; return; }
+  const code = adminCodeInput.value.trim();
+  const role = (code === 'ADMIN123') ? 'admin' : 'user';
+  try {
+    const cred = await auth.createUserWithEmailAndPassword(email, pass);
+    await db.ref('users/' + cred.user.uid).set({ email, role });
+    authStatus.style.color='green'; authStatus.textContent='Sign up success. Please sign in.';
+  } catch (err) {
+    authStatus.style.color='red'; authStatus.textContent = err.message;
+  }
+});
+
+loginBtn.addEventListener('click', async () => {
+  const email = emailInput.value.trim();
+  const pass = passwordInput.value;
+  if(!email || !pass){ authStatus.style.color='red'; authStatus.textContent='Email & password required'; return; }
+  try {
+    const cred = await auth.signInWithEmailAndPassword(email, pass);
+    const snap = await db.ref('users/' + cred.user.uid + '/role').once('value');
+    currentUserRole = snap.val() || 'user';
+    showApp();
+  } catch (err) {
+    authStatus.style.color='red'; authStatus.textContent = err.message;
+  }
+});
+
+logoutBtn.addEventListener('click', ()=> auth.signOut().then(()=> location.reload()) );
+
+/* ------------------- Show app & initialize ------------------- */
+function showApp(){
+  authSection.style.display = 'none';
+  appSection.classList.remove('hidden');
+  adminControls.classList.toggle('hidden', currentUserRole !== 'admin');
+  setupLogoRealtime();       // listen for logo changes
+  setupLogoUploadUI();        // enable admin upload if admin
+  loadItemsRealtime();        // subscribe to items
+}
+
+/* ------------------- Logo: Storage + Realtime DB (BASE64) ------------------- */
+/*
+  CHANGES:
+  - Upload: read file as DataURL (base64) and save the full dataURL string into Realtime DB at app/assets/logoBase64
+  - Display: read value from app/assets/logoBase64 and set <img src="..."> directly
+  This avoids Firebase Storage and uses Realtime DB to store base64 image string.
+*/
+
+function setupLogoRealtime(){
+  // listen for base64 dataURL stored in DB
+  db.ref('app/assets/logoBase64').on('value', snap => {
+    const dataUrl = snap.val();
+    if (dataUrl) {
+      // dataUrl should be like "data:image/png;base64,iVBORw0K..."
+      appLogo.src = dataUrl;
+    } else {
+      appLogo.src = ''; // fallback placeholder
+    }
+  });
+}
+
+function setupLogoUploadUI(){
+  // remove old listeners to avoid duplicates
+  appLogo.onclick = null;
+  logoFile.onchange = null;
+
+  if(currentUserRole === 'admin'){
+    // admin can click to upload
+    appLogo.addEventListener('click', ()=> logoFile.click());
+    logoFile.addEventListener('change', async (ev) => {
+      const file = ev.target.files[0];
+      if(!file) return;
+      appStatus.textContent = 'Reading file...';
+      try {
+        // read file as DataURL (base64)
+        const reader = new FileReader();
+        reader.onload = async (e) => {
+          const dataUrl = e.target.result; // full data URL
+          if(!dataUrl) {
+            appStatus.textContent = 'Failed to read file.';
+            setTimeout(()=> appStatus.textContent = '', 2000);
+            return;
+          }
+          // Save the data URL (base64) into Realtime Database
+          await db.ref('app/assets').update({ logoBase64: dataUrl });
+          appStatus.textContent = 'Logo saved (base64) and applied.';
+          // update local preview immediately
+          appLogo.src = dataUrl;
+          setTimeout(()=> appStatus.textContent = '', 2500);
+        };
+        reader.onerror = (err) => {
+          console.error('FileReader error', err);
+          appStatus.textContent = 'Failed to read file.';
+          setTimeout(()=> appStatus.textContent = '', 2200);
+        };
+        reader.readAsDataURL(file);
+      } catch(err) {
+        console.error('logo upload error', err);
+        appStatus.textContent = 'Logo save failed: ' + (err.message || err);
+        setTimeout(()=> appStatus.textContent = '', 2200);
+      }
+    });
+  } else {
+    // non-admin: clicking does nothing (view-only)
+    appLogo.addEventListener('click', ()=> {});
+  }
+}
+
+/* ------------------- Items: realtime load, render ------------------- */
+function loadItemsRealtime(){
+  db.ref('items').on('value', snap => {
+    itemsData = [];
+    snap.forEach(child => {
+      const v = child.val() || {};
+      itemsData.push({
+        key: child.key,
+        name: v.name || '',
+        initialStock: Number(v.initialStock || 0),
+        stockIn: Number(v.stockIn || 0),
+        stockOut: Number(v.stockOut || 0),
+        finalStock: Number(v.finalStock || 0)
+      });
+    });
+    renderItems();
+  });
+}
+
+function renderItems(){
+  const q = (searchInput.value || '').toLowerCase();
+  const filtered = itemsData.filter(i => (i.name||'').toLowerCase().includes(q));
+  // render
+  itemsTable.innerHTML = '';
+  filtered.forEach((item, idx) => {
+    const tr = document.createElement('tr');
+
+    const tdNo = document.createElement('td'); tdNo.textContent = idx + 1;
+    const tdName = document.createElement('td'); tdName.textContent = item.name;
+    tdName.contentEditable = false;
+
+    const tdInitial = document.createElement('td'); tdInitial.textContent = item.initialStock;
+
+    const tdIn = document.createElement('td');
+    const inInput = document.createElement('input'); inInput.type='number'; inInput.min=0; inInput.value = item.stockIn; inInput.className='num-input';
+    tdIn.appendChild(inInput);
+
+    const tdOut = document.createElement('td');
+    const outInput = document.createElement('input'); outInput.type='number'; outInput.min=0; outInput.value = item.stockOut; outInput.className='num-input';
+    tdOut.appendChild(outInput);
+
+    const tdFinal = document.createElement('td'); tdFinal.textContent = item.finalStock;
+
+    const tdAction = document.createElement('td');
+
+    if(currentUserRole === 'admin'){
+      const editBtn = document.createElement('button'); editBtn.textContent = 'Edit Name'; editBtn.className='small';
+      editBtn.addEventListener('click', ()=> editItemName(item.key, item.name));
+      tdAction.appendChild(editBtn);
+
+      const deleteBtn = document.createElement('button'); deleteBtn.textContent = 'Delete'; deleteBtn.className='small';
+      deleteBtn.addEventListener('click', ()=> deleteItem(item.key));
+      tdAction.appendChild(deleteBtn);
+    }
+
+    // update stock inputs: when changed, write both stockIn/stockOut and finalStock
+    const recalcAndSave = () => {
+      const inVal = parseInt(inInput.value || 0, 10);
+      const outVal = parseInt(outInput.value || 0, 10);
+      const finalVal = Math.max(0, (Number(item.initialStock || 0) + inVal - outVal));
+      tdFinal.textContent = finalVal;
+      // write to db
+      db.ref('items/' + item.key).update({ stockIn: inVal, stockOut: outVal, finalStock: finalVal });
+    };
+    inInput.addEventListener('input', recalcAndSave);
+    outInput.addEventListener('input', recalcAndSave);
+
+    tr.appendChild(tdNo);
+    tr.appendChild(tdName);
+    tr.appendChild(tdInitial);
+    tr.appendChild(tdIn);
+    tr.appendChild(tdOut);
+    tr.appendChild(tdFinal);
+    tr.appendChild(tdAction);
+    itemsTable.appendChild(tr);
+  });
+}
+
+/* ------------------- Add / Edit / Delete item ------------------- */
+addItemBtn.addEventListener('click', ()=> {
+  if(currentUserRole !== 'admin'){ alert('Only admin can add items'); return; }
+  const name = prompt('New item name:');
+  if(!name || !name.trim()) { alert('Name empty'); return; }
+  const initialRaw = prompt('Initial stock (number):', '0');
+  const initial = parseInt(initialRaw || 0, 10) || 0;
+  const key = db.ref('items').push().key;
+  db.ref('items/' + key).set({
+    name: name.trim(),
+    initialStock: initial,
+    stockIn: 0,
+    stockOut: 0,
+    finalStock: initial
+  });
+});
+
+function editItemName(key, oldName){
+  const newName = prompt('New name:', oldName);
+  if(!newName || !newName.trim()) return;
+  db.ref('items/' + key).update({ name: newName.trim() });
+}
+
+function deleteItem(key){
+  if(!confirm('Delete this item?')) return;
+  db.ref('items/' + key).remove();
+}
+
+/* ------------------- Search & Sort ------------------- */
+searchInput.addEventListener('input', renderItems);
+sortAscBtn.addEventListener('click', ()=> { itemsData.sort((a,b)=> (a.name||'').localeCompare(b.name||'')); renderItems(); });
+sortDescBtn.addEventListener('click', ()=> { itemsData.sort((a,b)=> (b.name||'').localeCompare(a.name||'')); renderItems(); });
+
+/* ------------------- Export Excel ------------------- */
+exportBtn.addEventListener('click', async ()=> {
+  const rows = itemsData.map((it, i) => ({
+    No: i+1,
+    Name: it.name,
+    InitialStock: it.initialStock,
+    StockIn: it.stockIn,
+    StockOut: it.stockOut,
+    FinalStock: it.finalStock
+  }));
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Items');
+  XLSX.writeFile(wb, 'items.xlsx');
+});
+
+/* ------------------- Robust Import (Excel / CSV) ------------------- */
+importBtn.addEventListener('click', ()=> {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = '.xlsx,.xls,.csv';
+  inp.onchange = (ev) => {
+    const file = ev.target.files[0];
+    if(!file) return;
+    appStatus.textContent = 'Reading file...';
+    const reader = new FileReader();
+
+    reader.onload = async (e) => {
+      try {
+        let rows = [];
+        const fname = (file.name || '').toLowerCase();
+
+        if(fname.endsWith('.csv')){
+          const text = e.target.result;
+          const sep = detectSeparator(text);
+          const lines = text.split(/\r?\n/).filter(l => l.trim() !== '');
+          if(lines.length === 0){ appStatus.textContent = 'CSV empty'; return; }
+          const headers = lines[0].split(sep).map(h => sanitizeHeader(h));
+          for(let i=1;i<lines.length;i++){
+            const parts = lines[i].split(sep);
+            if(parts.length === 1 && parts[0].trim() === '') continue;
+            const obj = {};
+            for(let j=0;j<headers.length;j++){
+              obj[headers[j] || ('col'+j)] = (parts[j] !== undefined) ? parts[j].trim() : '';
+            }
+            rows.push(obj);
+          }
+        } else {
+          // Excel: read every sheet for robustness
+          const wb = XLSX.read(e.target.result, { type:'binary' });
+          wb.SheetNames.forEach(sn => {
+            const sheet = wb.Sheets[sn];
+            const json = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+            json.forEach(r => rows.push(normalizeKeys(r)));
+          });
+        }
+
+        // normalize rows to {name, initialStock, stockIn, stockOut}
+        const normalized = rows.map((r, idx) => {
+          const rr = normalizeKeys(r);
+          let name = pickFirst(rr, ['name','nama','item_name','item','nama_barang','product','title']);
+          if(!name || String(name).trim()==='') {
+            // pick first non-numeric cell
+            for(const k in rr){
+              if(typeof rr[k] === 'string' && rr[k].trim() !== '' && isNaN(Number(rr[k].toString().replace(/,/g,'')))){
+                name = rr[k]; break;
+              }
+            }
+          }
+          if(!name || String(name).trim() === '') name = 'Item_' + (Date.now()%100000) + '_' + idx;
+
+          let initial = pickFirst(rr, ['initial_stock','initialstock','stok_awal','stokawal','stok','stock']);
+          if(initial === undefined || initial === '') {
+            // look for any numeric column
+            for(const k in rr){ const n = parseNumberSafe(rr[k]); if(!isNaN(n)){ initial = n; break; } }
+          } else initial = parseNumberSafe(initial);
+          if(isNaN(initial)) initial = 0;
+
+          let inVal = pickFirst(rr, ['stock_in','stockin','stock_in_','masuk','add','in']);
+          inVal = parseNumberSafe(inVal); if(isNaN(inVal)) inVal = 0;
+
+          let outVal = pickFirst(rr, ['stock_out','stockout','stock_out_','keluar','out']);
+          outVal = parseNumberSafe(outVal); if(isNaN(outVal)) outVal = 0;
+
+          const final = Math.max(0, initial + (inVal||0) - (outVal||0));
+
+          return { name: String(name).trim(), initialStock: Number(initial), stockIn: Number(inVal), stockOut: Number(outVal), finalStock: Number(final) };
+        });
+
+        // push to firebase using push() keys to avoid overwrite
+        let added = 0;
+        for(let i=0;i<normalized.length;i++){
+          const it = normalized[i];
+          const key = db.ref('items').push().key;
+          await db.ref('items/' + key).set({
+            name: it.name,
+            initialStock: it.initialStock,
+            stockIn: it.stockIn,
+            stockOut: it.stockOut,
+            finalStock: it.finalStock
+          });
+          added++;
+        }
+        appStatus.textContent = 'Import complete: ' + added + ' items added.';
+        setTimeout(()=> appStatus.textContent = '', 3500);
+
+      } catch(err){
+        console.error('Import error', err);
+        appStatus.textContent = 'Import failed: ' + (err.message || err);
+      }
+    };
+
+    if(file.name.toLowerCase().endsWith('.csv')) reader.readAsText(file);
+    else reader.readAsBinaryString(file);
+  };
+  inp.click();
+});
+
+/* ------------------- Helper functions for import ------------------- */
+function detectSeparator(text){
+  const first = text.split(/\r?\n/)[0] || '';
+  if(first.indexOf(';') !== -1) return ';';
+  if(first.indexOf(',') !== -1) return ',';
+  if(first.indexOf('\t') !== -1) return '\t';
+  return ',';
+}
+function sanitizeHeader(h){ if(h===undefined||h===null) return ''; return String(h).toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_]/g,'').trim(); }
+function normalizeKeys(obj){ const out = {}; for(const k in obj){ const sk = sanitizeHeader(k); out[sk||k] = obj[k]; } return out; }
+function pickFirst(obj, candidates){ for(const c of candidates){ if(obj[c] !== undefined && obj[c] !== null && String(obj[c]).toString().trim() !== '') return obj[c]; } return undefined; }
+function parseNumberSafe(v){
+  if(v===null||v===undefined) return NaN;
+  if(typeof v === 'number') return v;
+  let s = String(v).trim();
+  if(s==='') return NaN;
+  s = s.replace(/,/g,'');
+  const dots = (s.match(/\./g) || []).length;
+  if(dots > 1) s = s.replace(/\./g,'');
+  const n = Number(s);
+  return isNaN(n) ? NaN : n;
+}
+
+/* ------------------- Delete All (admin) ------------------- */
+deleteAllBtn.addEventListener('click', async ()=> {
+  if(currentUserRole !== 'admin'){ alert('Only admin can delete all items'); return; }
+  if(!confirm('Delete ALL items? This cannot be undone.')) return;
+  try {
+    await db.ref('items').remove();
+    appStatus.textContent = 'All items deleted.';
+    setTimeout(()=> appStatus.textContent = '', 2500);
+  } catch(err){
+    appStatus.textContent = 'Delete failed: ' + (err.message || err);
+  }
+});
+
+/* ------------------- Delete account (any user) ------------------- */
+deleteAccountBtn.addEventListener('click', async ()=> {
+  const user = auth.currentUser;
+  if(!user){ alert('No signed-in user'); return; }
+  if(!confirm('Delete your account? This will remove your authentication record.')) return;
+  try {
+    await db.ref('users/' + user.uid).remove();
+    await user.delete();
+    alert('Account deleted.');
+    location.reload();
+  } catch(err){
+    console.warn('delete account error', err);
+    if(err && err.code === 'auth/requires-recent-login'){
+      alert('For security, please sign in again, then click Delete Account.');
+      try { await auth.signOut(); } catch(e) {}
+    } else {
+      alert('Account deletion failed: ' + (err.message || err));
+    }
+  }
+});
+
+/* ------------------- Small UX cleanup ------------------- */
+searchInput.addEventListener('input', ()=> renderItems());
+</script>
+</body>
+</html>
